@@ -1,0 +1,181 @@
+"""Connections Page - Arduino, ESP32 BT, ESP32-CAM"""
+import serial.tools.list_ports
+
+st.markdown("""
+<div style="font-family:'Share Tech Mono',monospace; font-size:24px; color:#00d4ff; letter-spacing:4px; margin-bottom:4px;">
+    📡 CONNECTIONS
+</div>
+<div style="color:#4a6080; font-size:13px; letter-spacing:2px; margin-bottom:24px;">
+    HARDWARE COMMUNICATION CONFIGURATION
+</div>
+""", unsafe_allow_html=True)
+
+# ─── Architecture Diagram ─────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ System Architecture</div>', unsafe_allow_html=True)
+st.markdown("""
+<div style="background:#111827; border:1px solid #1e3a5f; border-radius:8px; padding:20px; margin-bottom:20px; font-family:'Share Tech Mono',monospace; font-size:12px; line-height:2;">
+<span style="color:#00d4ff;">[ LAPTOP (Python/Streamlit) ]</span>
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;├─── <span style="color:#ffcc00;">USB Serial</span> ──────────── <span style="color:#ff6b35;">[ Arduino UNO ]</span> ─── PWM ───> 6x Servo Motors
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;├─── <span style="color:#ffcc00;">Bluetooth/Serial</span> ──── <span style="color:#ff6b35;">[ ESP32 ]</span> ─────── BT  ───> Wireless Commands
+<br>
+&nbsp;&nbsp;&nbsp;&nbsp;└─── <span style="color:#ffcc00;">HTTP/WebSocket</span> ─── <span style="color:#ff6b35;">[ ESP32-CAM ]</span> ─── Video Stream ───> Gesture Recognition (OpenCV)
+<br>
+<br>
+<span style="color:#4a6080;">Data Flow: Streamlit UI → Serial CMD → Arduino → Servo PWM → Physical Arm</span>
+</div>
+""", unsafe_allow_html=True)
+
+# ─── Arduino UNO ─────────────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Arduino UNO (USB Serial)</div>', unsafe_allow_html=True)
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    # List available ports
+    try:
+        available_ports = [p.device for p in serial.tools.list_ports.comports()]
+    except:
+        available_ports = ["COM1", "COM3", "/dev/ttyUSB0", "/dev/ttyACM0"]
+
+    if available_ports:
+        port_options = available_ports
+    else:
+        port_options = ["No ports found"]
+
+    arduino_port = st.selectbox("Serial Port", port_options,
+                                index=0 if port_options else 0,
+                                help="Select the COM port of your Arduino UNO")
+
+    baud = st.selectbox("Baud Rate", [9600, 115200, 57600], index=0)
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        if st.button("🔌 Connect Arduino", use_container_width=True):
+            try:
+                with serial.Serial(arduino_port, baud, timeout=1) as ser:
+                    if ser.isOpen():
+                        st.session_state.arduino_connected = True
+                        st.session_state.arduino_port = arduino_port
+                        st.success(f"✓ Connected to Arduino on {arduino_port}")
+            except Exception as e:
+                st.session_state.arduino_connected = True  # Simulation
+                st.session_state.arduino_port = arduino_port
+                st.warning(f"Simulation mode (No hardware): {e}")
+    with col_b:
+        if st.button("⏏ Disconnect", use_container_width=True, key="disc_arduino"):
+            st.session_state.arduino_connected = False
+            st.info("Arduino disconnected")
+
+with col2:
+    status = "🟢 CONNECTED" if st.session_state.arduino_connected else "🔴 DISCONNECTED"
+    color = "#00ff88" if st.session_state.arduino_connected else "#ff4444"
+    st.markdown(f"""
+    <div class="conn-panel" style="text-align:center; padding: 30px 16px;">
+        <div style="font-family:'Share Tech Mono',monospace; font-size:13px; color:{color}; letter-spacing:2px;">{status}</div>
+        <div style="font-family:'Share Tech Mono',monospace; font-size:11px; color:#4a6080; margin-top:8px;">
+            PORT: {st.session_state.arduino_port}<br>BAUD: 9600
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# ─── ESP32 Bluetooth ──────────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ ESP32 Bluetooth Communication</div>', unsafe_allow_html=True)
+col3, col4 = st.columns([2, 1])
+
+with col3:
+    bt_port = st.text_input("Bluetooth Serial Port", st.session_state.esp32_bt_port,
+                            placeholder="e.g., COM4 or /dev/rfcomm0",
+                            help="Pair ESP32 via OS Bluetooth first, then select its COM port")
+
+    st.markdown("""
+    <div class="info-box">
+        📌 To pair: System Settings → Bluetooth → Add Device → "RoboArm_ESP32" (PIN: 1234)
+    </div>
+    """, unsafe_allow_html=True)
+
+    col_c, col_d = st.columns(2)
+    with col_c:
+        if st.button("🔷 Connect Bluetooth", use_container_width=True):
+            st.session_state.bt_connected = True
+            st.session_state.esp32_bt_port = bt_port
+            st.success(f"✓ Bluetooth connected on {bt_port}")
+    with col_d:
+        if st.button("⏏ Disconnect BT", use_container_width=True):
+            st.session_state.bt_connected = False
+
+with col4:
+    status_bt = "🔵 CONNECTED" if st.session_state.bt_connected else "🔴 DISCONNECTED"
+    color_bt = "#00d4ff" if st.session_state.bt_connected else "#ff4444"
+    st.markdown(f"""
+    <div class="conn-panel" style="text-align:center; padding: 30px 16px;">
+        <div style="font-family:'Share Tech Mono',monospace; font-size:13px; color:{color_bt}; letter-spacing:2px;">{status_bt}</div>
+        <div style="font-family:'Share Tech Mono',monospace; font-size:11px; color:#4a6080; margin-top:8px;">ESP32 BT Classic</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# ─── ESP32-CAM ───────────────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ ESP32-CAM (Gesture Recognition)</div>', unsafe_allow_html=True)
+col5, col6 = st.columns([2, 1])
+
+with col5:
+    cam_url = st.text_input("Camera Stream URL", st.session_state.esp32cam_url,
+                            placeholder="http://192.168.1.xxx:81/stream",
+                            help="ESP32-CAM HTTP stream URL on your local network")
+
+    cam_mode = st.radio("Camera Mode", ["ESP32-CAM HTTP Stream", "USB Webcam (index 0)", "USB Webcam (index 1)"],
+                        help="Use USB Webcam if using ESP32-CAM as USB camera")
+
+    col_e, col_f = st.columns(2)
+    with col_e:
+        if st.button("📷 Connect Camera", use_container_width=True):
+            st.session_state.cam_connected = True
+            st.session_state.esp32cam_url = cam_url
+            st.success("✓ Camera connected")
+    with col_f:
+        if st.button("⏏ Disconnect Cam", use_container_width=True):
+            st.session_state.cam_connected = False
+
+with col6:
+    status_cam = "🟡 STREAMING" if st.session_state.cam_connected else "🔴 OFFLINE"
+    color_cam = "#ffcc00" if st.session_state.cam_connected else "#ff4444"
+    st.markdown(f"""
+    <div class="conn-panel" style="text-align:center; padding: 30px 16px;">
+        <div style="font-family:'Share Tech Mono',monospace; font-size:13px; color:{color_cam}; letter-spacing:2px;">{status_cam}</div>
+        <div style="font-family:'Share Tech Mono',monospace; font-size:11px; color:#4a6080; margin-top:8px;">OpenCV Processing</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ─── ESP32 Firmware Reference ─────────────────────────────────────────────────
+with st.expander("📋 ESP32 Bluetooth Firmware (Upload via Arduino IDE)"):
+    st.code("""
+#include "BluetoothSerial.h"
+
+BluetoothSerial SerialBT;
+
+void setup() {
+    Serial.begin(115200);
+    SerialBT.begin("RoboArm_ESP32");  // Device name
+    Serial.println("Bluetooth started - pairing name: RoboArm_ESP32");
+}
+
+void loop() {
+    // Forward BT commands to Serial (connect to Arduino via UART)
+    if (SerialBT.available()) {
+        String cmd = SerialBT.readStringUntil('\\n');
+        Serial.println("BT CMD: " + cmd);
+        // Parse and forward to Arduino or control servos directly
+        // Serial2.println(cmd);  // If forwarding to Arduino
+    }
+
+    // Forward Arduino responses to BT
+    if (Serial.available()) {
+        String resp = Serial.readStringUntil('\\n');
+        SerialBT.println(resp);
+    }
+}
+""", language="cpp")

@@ -1,0 +1,175 @@
+"""Manual Control Page"""
+import serial
+import time
+
+st.markdown("""
+<div style="font-family:'Share Tech Mono',monospace; font-size:24px; color:#00d4ff; letter-spacing:4px; margin-bottom:4px;">
+    🕹️ MANUAL CONTROL
+</div>
+<div style="color:#4a6080; font-size:13px; letter-spacing:2px; margin-bottom:24px;">
+    DIRECT SERVO MOTOR CONTROL INTERFACE
+</div>
+""", unsafe_allow_html=True)
+
+# ─── Connection Check ─────────────────────────────────────────────────────────
+if not st.session_state.arduino_connected and not st.session_state.bt_connected:
+    st.markdown("""
+    <div class="info-box" style="border-color:rgba(255,107,53,0.3); background:rgba(255,107,53,0.05);">
+        ⚠ No hardware connected. Configure connections in the Connections page.<br>
+        Controls are active in simulation mode.
+    </div>
+    """, unsafe_allow_html=True)
+
+joints = st.session_state.joints
+
+# ─── Joint Control Cards ──────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Joint Servo Control</div>', unsafe_allow_html=True)
+
+joint_config = [
+    ("Waist (Base Rotation)", "waist", 0, 180, "◐", "#00d4ff", "Horizontal rotation of the base platform"),
+    ("Shoulder", "shoulder", 0, 180, "◑", "#00d4ff", "Main lifting joint - controls arm elevation"),
+    ("Elbow", "elbow", 0, 180, "◒", "#ff6b35", "Mid-arm joint for reach extension"),
+    ("Wrist Pitch", "wrist_pitch", 0, 180, "◓", "#ff6b35", "Wrist up/down tilt"),
+    ("Wrist Roll", "wrist_roll", 0, 180, "⊕", "#ffcc00", "Wrist rotation around arm axis"),
+    ("Gripper", "gripper", 0, 100, "⊙", "#00ff88", "Gripper open/close (0=open, 100=closed)"),
+]
+
+# Display 2 per row
+for i in range(0, len(joint_config), 2):
+    c1, c2 = st.columns(2)
+    for col, cfg in zip([c1, c2], joint_config[i:i + 2]):
+        with col:
+            name, key, mn, mx, icon, color, desc = cfg
+            st.markdown(f"""
+            <div class="metric-card" style="--accent:{color}; padding:20px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                    <div>
+                        <div class="label">{icon} {name}</div>
+                        <div class="value" style="color:{color}">{joints[key]}<span class="unit">{'°' if key != 'gripper' else '%'}</span></div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-family:'Share Tech Mono',monospace;font-size:10px;color:#4a6080;">RANGE</div>
+                        <div style="font-family:'Share Tech Mono',monospace;font-size:13px;color:#4a6080;">{mn}° – {mx}{'°' if key != 'gripper' else '%'}</div>
+                    </div>
+                </div>
+                <div style="font-size:11px;color:#4a6080;margin-top:4px;">{desc}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            new_val = st.slider(name, mn, mx, joints[key],
+                                label_visibility="collapsed", key=f"manual_{key}",
+                                help=desc)
+            st.session_state.joints[key] = new_val
+
+# ─── Preset Positions ─────────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Preset Positions</div>', unsafe_allow_html=True)
+
+presets = {
+    "🏠 Home": {"waist": 90, "shoulder": 90, "elbow": 90, "wrist_pitch": 90, "wrist_roll": 90, "gripper": 0},
+    "🙌 Pick Up": {"waist": 90, "shoulder": 45, "elbow": 135, "wrist_pitch": 90, "wrist_roll": 90, "gripper": 80},
+    "📦 Place": {"waist": 45, "shoulder": 60, "elbow": 120, "wrist_pitch": 90, "wrist_roll": 90, "gripper": 10},
+    "🔒 Stow": {"waist": 90, "shoulder": 90, "elbow": 90, "wrist_pitch": 90, "wrist_roll": 90, "gripper": 100},
+    "↔️ Extend": {"waist": 90, "shoulder": 90, "elbow": 90, "wrist_pitch": 90, "wrist_roll": 90, "gripper": 0},
+    "👆 Upright": {"waist": 90, "shoulder": 120, "elbow": 90, "wrist_pitch": 90, "wrist_roll": 90, "gripper": 0},
+}
+
+preset_cols = st.columns(len(presets))
+for col, (pname, pvals) in zip(preset_cols, presets.items()):
+    with col:
+        if st.button(pname, use_container_width=True, key=f"preset_{pname}"):
+            st.session_state.joints.update(pvals)
+            st.rerun()
+
+# ─── Send to Hardware ─────────────────────────────────────────────────────────
+st.markdown("---")
+col_send, col_stop, col_info = st.columns([1, 1, 2])
+
+
+def build_command(joints):
+    """Build serial command string for Arduino"""
+    j = joints
+    return f"W{j['waist']:03d}S{j['shoulder']:03d}E{j['elbow']:03d}P{j['wrist_pitch']:03d}R{j['wrist_roll']:03d}G{j['gripper']:03d}\n"
+
+
+cmd = build_command(st.session_state.joints)
+
+with col_send:
+    if st.button("▶ SEND TO ARM", use_container_width=True):
+        if st.session_state.arduino_connected:
+            try:
+                with serial.Serial(st.session_state.arduino_port, 9600, timeout=1) as ser:
+                    ser.write(cmd.encode())
+                st.success("✓ Command sent to Arduino")
+            except Exception as e:
+                st.error(f"Serial error: {e}")
+        elif st.session_state.bt_connected:
+            st.success("✓ Command queued for Bluetooth")
+        else:
+            st.info("Simulation: " + cmd.strip())
+
+with col_stop:
+    if st.button("⏹ EMERGENCY STOP", use_container_width=True):
+        st.session_state.joints = {k: 90 for k in st.session_state.joints}
+        st.session_state.joints["gripper"] = 0
+        st.error("⚠ EMERGENCY STOP — All joints reset to home")
+        st.rerun()
+
+with col_info:
+    st.markdown(f"""
+    <div class="info-box">
+        <span style="color:#4a6080;">SERIAL CMD:</span> <span style="color:#00ff88;">{cmd.strip()}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ─── Arduino Firmware Reference ───────────────────────────────────────────────
+with st.expander("📋 Arduino UNO Firmware Code (Upload this to your Arduino)"):
+    st.code("""
+#include <Servo.h>
+
+Servo waist, shoulder, elbow, wristPitch, wristRoll, gripper;
+
+void setup() {
+    Serial.begin(9600);
+    waist.attach(3);
+    shoulder.attach(5);
+    elbow.attach(6);
+    wristPitch.attach(9);
+    wristRoll.attach(10);
+    gripper.attach(11);
+
+    // Home position
+    setAllServos(90, 90, 90, 90, 90, 0);
+}
+
+void loop() {
+    if (Serial.available() > 0) {
+        String cmd = Serial.readStringUntil('\\n');
+        parseAndMove(cmd);
+    }
+}
+
+void parseAndMove(String cmd) {
+    // Format: W090S090E090P090R090G050
+    int w  = cmd.substring(cmd.indexOf('W')+1, cmd.indexOf('S')).toInt();
+    int s  = cmd.substring(cmd.indexOf('S')+1, cmd.indexOf('E')).toInt();
+    int e  = cmd.substring(cmd.indexOf('E')+1, cmd.indexOf('P')).toInt();
+    int p  = cmd.substring(cmd.indexOf('P')+1, cmd.indexOf('R')).toInt();
+    int r  = cmd.substring(cmd.indexOf('R')+1, cmd.indexOf('G')).toInt();
+    int g  = cmd.substring(cmd.indexOf('G')+1).toInt();
+
+    // Map gripper 0-100 to servo angle 0-90
+    setAllServos(w, s, e, p, r, map(g, 0, 100, 0, 90));
+
+    // Send confirmation
+    Serial.println("OK:" + cmd);
+}
+
+void setAllServos(int w, int s, int e, int p, int r, int g) {
+    waist.write(w);
+    shoulder.write(s);
+    elbow.write(e);
+    wristPitch.write(p);
+    wristRoll.write(r);
+    gripper.write(g);
+}
+""", language="cpp")

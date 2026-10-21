@@ -1,0 +1,210 @@
+"""Gesture Control Page - OpenCV MediaPipe Hand Tracking"""
+import time
+
+st.markdown("""
+<div style="font-family:'Share Tech Mono',monospace; font-size:24px; color:#00d4ff; letter-spacing:4px; margin-bottom:4px;">
+    👁️ GESTURE CONTROL
+</div>
+<div style="color:#4a6080; font-size:13px; letter-spacing:2px; margin-bottom:24px;">
+    OPENCV + MEDIAPIPE HAND GESTURE RECOGNITION
+</div>
+""", unsafe_allow_html=True)
+
+# ─── Gesture Map Reference ────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Gesture Command Map</div>', unsafe_allow_html=True)
+
+gestures = [
+    ("✊", "Fist", "Close gripper", "gripper → 100%"),
+    ("🖐️", "Open Hand", "Open gripper", "gripper → 0%"),
+    ("👆", "Index Up", "Move shoulder up", "shoulder +5°"),
+    ("👇", "Index Down", "Move shoulder down", "shoulder -5°"),
+    ("👉", "Point Right", "Rotate waist right", "waist +5°"),
+    ("👈", "Point Left", "Rotate waist left", "waist -5°"),
+    ("✌️", "Peace Sign", "Extend elbow", "elbow +10°"),
+    ("🤞", "Crossed Fingers", "Retract elbow", "elbow -10°"),
+    ("🤟", "Hang Loose", "Wrist roll right", "wrist_roll +10°"),
+    ("🤙", "Call Me", "Wrist roll left", "wrist_roll -10°"),
+    ("👍", "Thumbs Up", "Home position", "All → 90°"),
+    ("🤜", "Fist Up", "Emergency Stop", "All → STOP"),
+]
+
+cols = st.columns(4)
+for i, (icon, name, desc, cmd) in enumerate(gestures):
+    with cols[i % 4]:
+        st.markdown(f"""
+        <div class="metric-card" style="text-align:center; padding:12px;">
+            <div style="font-size:28px; margin-bottom:4px;">{icon}</div>
+            <div style="font-family:'Share Tech Mono',monospace; font-size:12px; color:#00d4ff;">{name}</div>
+            <div style="font-size:11px; color:#c9d8f0; margin:4px 0;">{desc}</div>
+            <div style="font-family:'Share Tech Mono',monospace; font-size:10px; color:#4a6080;">{cmd}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# ─── Live Camera Feed ─────────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Live Camera Feed</div>', unsafe_allow_html=True)
+
+col_cam, col_status = st.columns([2, 1])
+
+with col_cam:
+    if st.session_state.cam_connected:
+        st.markdown("""
+        <div style="background:#111827; border:1px solid #1e3a5f; border-radius:8px; 
+                    height:320px; display:flex; align-items:center; justify-content:center;
+                    font-family:'Share Tech Mono',monospace; color:#4a6080; font-size:14px;">
+            📷 Camera feed active — Use the Python gesture script to process frames
+        </div>
+        """, unsafe_allow_html=True)
+
+        if "gesture_running" not in st.session_state:
+            st.session_state.gesture_running = False
+
+        col_g1, col_g2 = st.columns(2)
+        with col_g1:
+            if st.button("▶ START GESTURE DETECTION", use_container_width=True, key="start_gest"):
+                st.session_state.gesture_running = True
+                st.success("Gesture detection active — Run gesture_server.py on your laptop")
+        with col_g2:
+            if st.button("⏹ STOP", use_container_width=True, key="stop_gest"):
+                st.session_state.gesture_running = False
+    else:
+        st.markdown("""
+        <div style="background:#111827; border:1px dashed #1e3a5f; border-radius:8px; 
+                    height:320px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+                    font-family:'Share Tech Mono',monospace; color:#4a6080;">
+            <div style="font-size:48px; margin-bottom:16px;">📷</div>
+            <div>Camera not connected</div>
+            <div style="font-size:11px; margin-top:8px;">Configure in Connections page</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+with col_status:
+    st.markdown("""
+    <div class="section-header">◈ Detected Gesture</div>
+    """, unsafe_allow_html=True)
+
+    detected = st.session_state.get("last_gesture", "None")
+    confidence = st.session_state.get("gesture_confidence", 0.0)
+
+    st.markdown(f"""
+    <div class="conn-panel" style="text-align:center; padding:20px;">
+        <div style="font-size:48px;">🖐️</div>
+        <div style="font-family:'Share Tech Mono',monospace; font-size:16px; color:#00d4ff; margin:8px 0;">{detected}</div>
+        <div style="font-size:11px; color:#4a6080;">CONFIDENCE</div>
+        <div style="font-family:'Share Tech Mono',monospace; font-size:20px; color:#00ff88;">{confidence:.0%}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ─── Gesture Server Script ────────────────────────────────────────────────────
+with st.expander("🐍 Gesture Recognition Server Script (gesture_server.py)"):
+    st.markdown("Run this script separately on your laptop alongside Streamlit:")
+    st.code("""
+# gesture_server.py — Run alongside Streamlit
+# pip install opencv-python mediapipe pyserial
+
+import cv2
+import mediapipe as mp
+import serial
+import time
+
+# Configuration
+SERIAL_PORT = "COM3"      # Arduino port
+CAM_INDEX   = 0           # 0 for USB webcam, or ESP32-CAM URL
+
+mp_hands = mp.solutions.hands
+mp_draw  = mp.solutions.drawing_utils
+
+def count_fingers(hand_landmarks):
+    tips = [8, 12, 16, 20]
+    fingers = []
+    # Thumb
+    fingers.append(1 if hand_landmarks.landmark[4].x < hand_landmarks.landmark[3].x else 0)
+    # Other fingers
+    for tip in tips:
+        fingers.append(1 if hand_landmarks.landmark[tip].y < hand_landmarks.landmark[tip-2].y else 0)
+    return fingers
+
+def classify_gesture(fingers):
+    total = sum(fingers)
+    if total == 0: return "FIST"
+    if total == 5: return "OPEN"
+    if fingers == [0,1,0,0,0]: return "INDEX_UP"
+    if fingers == [0,1,1,0,0]: return "PEACE"
+    if fingers == [1,0,0,0,1]: return "HANG_LOOSE"
+    if fingers[0] and not any(fingers[1:]): return "THUMBS_UP"
+    return f"FINGERS_{total}"
+
+GESTURE_CMDS = {
+    "FIST":       "G100",
+    "OPEN":       "G000",
+    "INDEX_UP":   "S+05",
+    "PEACE":      "E+10",
+    "HANG_LOOSE": "R+10",
+    "THUMBS_UP":  "HOME",
+}
+
+cap = cv2.VideoCapture(CAM_INDEX)
+
+try:
+    ser = serial.Serial(SERIAL_PORT, 9600)
+    print(f"Connected to Arduino on {SERIAL_PORT}")
+except:
+    ser = None
+    print("No serial — simulation mode")
+
+joints = {"waist":90, "shoulder":90, "elbow":90, "wrist_pitch":90, "wrist_roll":90, "gripper":0}
+
+def apply_cmd(cmd, joints):
+    if cmd == "HOME":
+        return {k: 90 for k in joints} | {"gripper": 0}
+    if cmd.startswith("G"): joints["gripper"] = int(cmd[1:])
+    elif cmd.startswith("S+"): joints["shoulder"] = min(180, joints["shoulder"] + int(cmd[2:]))
+    elif cmd.startswith("S-"): joints["shoulder"] = max(0,   joints["shoulder"] - int(cmd[2:]))
+    elif cmd.startswith("E+"): joints["elbow"]    = min(180, joints["elbow"]    + int(cmd[2:]))
+    elif cmd.startswith("R+"): joints["wrist_roll"]= min(180, joints["wrist_roll"]+ int(cmd[2:]))
+    return joints
+
+with mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7) as hands:
+    last_gesture = None
+    last_sent = 0
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret: break
+
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        result = hands.process(frame_rgb)
+
+        gesture = "None"
+        if result.multi_hand_landmarks:
+            for lm in result.multi_hand_landmarks:
+                mp_draw.draw_landmarks(frame, lm, mp_hands.HAND_CONNECTIONS)
+                fingers = count_fingers(lm)
+                gesture = classify_gesture(fingers)
+
+        # Send command every 500ms if gesture changed
+        now = time.time()
+        if gesture != last_gesture and gesture in GESTURE_CMDS and (now - last_sent) > 0.5:
+            cmd = GESTURE_CMDS[gesture]
+            joints = apply_cmd(cmd, joints)
+            serial_cmd = f"W{joints['waist']:03d}S{joints['shoulder']:03d}E{joints['elbow']:03d}"
+            serial_cmd += f"P{joints['wrist_pitch']:03d}R{joints['wrist_roll']:03d}G{joints['gripper']:03d}"
+
+            if ser:
+                ser.write((serial_cmd + "\\n").encode())
+            print(f"Gesture: {gesture} → CMD: {serial_cmd}")
+            last_gesture = gesture
+            last_sent = now
+
+        # Display overlay
+        cv2.putText(frame, f"Gesture: {gesture}", (10,30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
+        cv2.imshow("Gesture Control — Press Q to quit", frame)
+
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+cap.release()
+cv2.destroyAllWindows()
+if ser: ser.close()
+""", language="python")

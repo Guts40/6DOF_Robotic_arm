@@ -1,0 +1,245 @@
+"""Dashboard Page"""
+import plotly.graph_objects as go
+import numpy as np
+import math
+
+st.markdown("""
+<div style="font-family:'Share Tech Mono',monospace; font-size:24px; color:#00d4ff; letter-spacing:4px; margin-bottom:4px;">
+    ◈ SYSTEM DASHBOARD
+</div>
+<div style="color:#4a6080; font-size:13px; letter-spacing:2px; margin-bottom:24px;">
+    REAL-TIME ARM MONITORING & CONTROL OVERVIEW
+</div>
+""", unsafe_allow_html=True)
+
+joints = st.session_state.joints
+
+# ─── Top Metrics Row ─────────────────────────────────────────────────────────
+col1, col2, col3, col4, col5, col6 = st.columns(6)
+
+joint_names = ["Waist", "Shoulder", "Elbow", "Wrist P.", "Wrist R.", "Gripper"]
+joint_keys = ["waist", "shoulder", "elbow", "wrist_pitch", "wrist_roll", "gripper"]
+joint_units = ["°", "°", "°", "°", "°", "%"]
+cols = [col1, col2, col3, col4, col5, col6]
+
+for col, name, key, unit in zip(cols, joint_names, joint_keys, joint_units):
+    val = joints[key]
+    with col:
+        st.markdown(f"""
+        <div class="metric-card">
+            <div class="label">{name}</div>
+            <div class="value">{val}<span class="unit">{unit}</span></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# ─── 3D Visualization + Polar Chart ──────────────────────────────────────────
+col_viz, col_polar = st.columns([2, 1])
+
+with col_viz:
+    st.markdown('<div class="section-header">◈ 3D Arm Visualization (Forward Kinematics)</div>', unsafe_allow_html=True)
+
+    # Forward Kinematics
+    L1, L2, L3, L4 = 120, 110, 90, 60  # mm (link lengths)
+
+    w = math.radians(joints["waist"])
+    s = math.radians(joints["shoulder"] - 90)
+    e = math.radians(joints["elbow"] - 90)
+    wp = math.radians(joints["wrist_pitch"] - 90)
+
+    # Compute joint positions (simplified planar + waist rotation)
+    p0 = np.array([0, 0, 0])
+    p1 = np.array([0, 0, 60])  # base height
+
+    p2 = p1 + np.array([
+        L1 * math.cos(s) * math.cos(w),
+        L1 * math.cos(s) * math.sin(w),
+        L1 * math.sin(s)
+    ])
+
+    p3 = p2 + np.array([
+        L2 * math.cos(s + e) * math.cos(w),
+        L2 * math.cos(s + e) * math.sin(w),
+        L2 * math.sin(s + e)
+    ])
+
+    p4 = p3 + np.array([
+        L3 * math.cos(s + e + wp) * math.cos(w),
+        L3 * math.cos(s + e + wp) * math.sin(w),
+        L3 * math.sin(s + e + wp)
+    ])
+
+    p5 = p4 + np.array([
+        L4 * math.cos(s + e + wp) * math.cos(w),
+        L4 * math.cos(s + e + wp) * math.sin(w),
+        L4 * math.sin(s + e + wp)
+    ])
+
+    points = np.array([p0, p1, p2, p3, p4, p5])
+
+    fig3d = go.Figure()
+
+    # Arm links
+    fig3d.add_trace(go.Scatter3d(
+        x=points[:, 0], y=points[:, 1], z=points[:, 2],
+        mode='lines+markers',
+        line=dict(color='#00d4ff', width=8),
+        marker=dict(size=[6, 8, 10, 10, 10, 8],
+                    color=['#4a6080', '#00d4ff', '#00d4ff', '#ff6b35', '#ff6b35', '#00ff88'],
+                    symbol='circle'),
+        name='Arm Links',
+        hovertemplate='<b>Joint Position</b><br>X: %{x:.1f}mm<br>Y: %{y:.1f}mm<br>Z: %{z:.1f}mm<extra></extra>'
+    ))
+
+    # Ground plane grid
+    grid_range = np.linspace(-200, 200, 5)
+    for gx in grid_range:
+        fig3d.add_trace(go.Scatter3d(
+            x=[gx, gx], y=[-200, 200], z=[0, 0],
+            mode='lines', line=dict(color='rgba(30,58,95,0.4)', width=1),
+            showlegend=False, hoverinfo='none'
+        ))
+    for gy in grid_range:
+        fig3d.add_trace(go.Scatter3d(
+            x=[-200, 200], y=[gy, gy], z=[0, 0],
+            mode='lines', line=dict(color='rgba(30,58,95,0.4)', width=1),
+            showlegend=False, hoverinfo='none'
+        ))
+
+    # End effector reach circle
+    theta = np.linspace(0, 2 * np.pi, 60)
+    reach = L1 + L2 + L3 + L4
+    fig3d.add_trace(go.Scatter3d(
+        x=reach * np.cos(theta), y=reach * np.sin(theta), z=np.zeros(60),
+        mode='lines', line=dict(color='rgba(255,107,53,0.3)', width=2, dash='dash'),
+        name='Max Reach', showlegend=False
+    ))
+
+    # Vertical axis line
+    fig3d.add_trace(go.Scatter3d(
+        x=[0, 0], y=[0, 0], z=[0, 60],
+        mode='lines', line=dict(color='#4a6080', width=4),
+        name='Base', showlegend=False
+    ))
+
+    # End effector marker
+    fig3d.add_trace(go.Scatter3d(
+        x=[p5[0]], y=[p5[1]], z=[p5[2]],
+        mode='markers',
+        marker=dict(size=14, color='#00ff88', symbol='diamond',
+                    line=dict(color='white', width=2)),
+        name='End Effector'
+    ))
+
+    fig3d.update_layout(
+        scene=dict(
+            xaxis=dict(title='X (mm)', gridcolor='#1e3a5f', zerolinecolor='#1e3a5f',
+                       backgroundcolor='rgba(0,0,0,0)', color='#4a6080'),
+            yaxis=dict(title='Y (mm)', gridcolor='#1e3a5f', zerolinecolor='#1e3a5f',
+                       backgroundcolor='rgba(0,0,0,0)', color='#4a6080'),
+            zaxis=dict(title='Z (mm)', gridcolor='#1e3a5f', zerolinecolor='#1e3a5f',
+                       backgroundcolor='rgba(0,0,0,0)', color='#4a6080', range=[0, 400]),
+            bgcolor='rgba(10,14,26,0)',
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.2)),
+            aspectmode='cube'
+        ),
+        paper_bgcolor='rgba(17,24,39,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=0, r=0, t=0, b=0),
+        height=420,
+        legend=dict(font=dict(color='#c9d8f0', family='Share Tech Mono'),
+                    bgcolor='rgba(17,24,39,0.8)', bordercolor='#1e3a5f'),
+        font=dict(family='Share Tech Mono', color='#4a6080')
+    )
+    st.plotly_chart(fig3d, use_container_width=True, config={'displayModeBar': False})
+
+with col_polar:
+    st.markdown('<div class="section-header">◈ Joint Angles Radar</div>', unsafe_allow_html=True)
+
+    categories = ['Waist', 'Shoulder', 'Elbow', 'Wrist P.', 'Wrist R.', 'Gripper']
+    values = [joints[k] for k in joint_keys]
+    max_vals = [180, 180, 180, 180, 180, 100]
+    norm = [v / m * 100 for v, m in zip(values, max_vals)]
+    norm.append(norm[0])
+    categories.append(categories[0])
+
+    angles = np.linspace(0, 2 * np.pi, len(categories), endpoint=True)
+
+    fig_polar = go.Figure()
+    fig_polar.add_trace(go.Scatterpolar(
+        r=norm, theta=categories,
+        fill='toself',
+        fillcolor='rgba(0,212,255,0.1)',
+        line=dict(color='#00d4ff', width=2),
+        marker=dict(color='#00d4ff', size=6),
+        name='Current'
+    ))
+    fig_polar.add_trace(go.Scatterpolar(
+        r=[100] * 7, theta=categories,
+        fill='toself',
+        fillcolor='rgba(255,107,53,0.03)',
+        line=dict(color='rgba(255,107,53,0.3)', width=1, dash='dot'),
+        name='Max Range'
+    ))
+
+    fig_polar.update_layout(
+        polar=dict(
+            radialaxis=dict(visible=True, range=[0, 100], color='#4a6080',
+                            gridcolor='#1e3a5f', linecolor='#1e3a5f',
+                            tickfont=dict(color='#4a6080', size=9)),
+            angularaxis=dict(color='#c9d8f0', gridcolor='#1e3a5f', linecolor='#1e3a5f',
+                             tickfont=dict(color='#c9d8f0', family='Share Tech Mono', size=10)),
+            bgcolor='rgba(0,0,0,0)'
+        ),
+        paper_bgcolor='rgba(17,24,39,0)',
+        font=dict(family='Share Tech Mono', color='#c9d8f0'),
+        legend=dict(font=dict(color='#c9d8f0', size=10), bgcolor='rgba(0,0,0,0)'),
+        margin=dict(l=30, r=30, t=20, b=20),
+        height=420
+    )
+    st.plotly_chart(fig_polar, use_container_width=True, config={'displayModeBar': False})
+
+# ─── End Effector Position ────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ End Effector Position (Forward Kinematics Result)</div>',
+            unsafe_allow_html=True)
+
+col_x, col_y, col_z, col_r, col_mode = st.columns(5)
+with col_x:
+    st.markdown(
+        f'<div class="metric-card"><div class="label">X Position</div><div class="value">{p5[0]:.1f}<span class="unit">mm</span></div></div>',
+        unsafe_allow_html=True)
+with col_y:
+    st.markdown(
+        f'<div class="metric-card"><div class="label">Y Position</div><div class="value">{p5[1]:.1f}<span class="unit">mm</span></div></div>',
+        unsafe_allow_html=True)
+with col_z:
+    st.markdown(
+        f'<div class="metric-card"><div class="label">Z Position</div><div class="value">{p5[2]:.1f}<span class="unit">mm</span></div></div>',
+        unsafe_allow_html=True)
+
+total_reach = math.sqrt(p5[0] ** 2 + p5[1] ** 2 + p5[2] ** 2)
+with col_r:
+    st.markdown(
+        f'<div class="metric-card"><div class="label">Total Reach</div><div class="value">{total_reach:.1f}<span class="unit">mm</span></div></div>',
+        unsafe_allow_html=True)
+with col_mode:
+    mode_color = {"Manual": "#00d4ff", "Gesture": "#ff6b35", "Voice": "#00ff88", "Replay": "#ffcc00"}.get(
+        st.session_state.control_mode, "#00d4ff")
+    st.markdown(
+        f'<div class="metric-card" style="--accent:{mode_color}"><div class="label">Control Mode</div><div class="value" style="font-size:18px;color:{mode_color}">{st.session_state.control_mode}</div></div>',
+        unsafe_allow_html=True)
+
+# ─── Quick Control Sliders ────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Quick Joint Control</div>', unsafe_allow_html=True)
+
+cols_s = st.columns(6)
+joint_ranges = {"waist": (0, 180), "shoulder": (0, 180), "elbow": (0, 180),
+                "wrist_pitch": (0, 180), "wrist_roll": (0, 180), "gripper": (0, 100)}
+
+for col, name, key in zip(cols_s, joint_names, joint_keys):
+    with col:
+        st.markdown(
+            f"<div style='font-family:Share Tech Mono,monospace;font-size:11px;color:#4a6080;letter-spacing:1px;'>{name.upper()}</div>",
+            unsafe_allow_html=True)
+        new_val = st.slider(name, *joint_ranges[key], st.session_state.joints[key],
+                            label_visibility="collapsed", key=f"dash_{key}")
+        st.session_state.joints[key] = new_val

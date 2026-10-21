@@ -1,0 +1,234 @@
+"""Motion Recorder Page - Record and Replay Sequences"""
+import json
+import time
+import os
+
+st.markdown("""
+<div style="font-family:'Share Tech Mono',monospace; font-size:24px; color:#00d4ff; letter-spacing:4px; margin-bottom:4px;">
+    📼 MOTION RECORDER
+</div>
+<div style="color:#4a6080; font-size:13px; letter-spacing:2px; margin-bottom:24px;">
+    RECORD, SAVE & REPLAY MOTION SEQUENCES
+</div>
+""", unsafe_allow_html=True)
+
+# ─── Initialize ───────────────────────────────────────────────────────────────
+if "recorded_frames" not in st.session_state:
+    st.session_state.recorded_frames = []
+if "recording" not in st.session_state:
+    st.session_state.recording = False
+if "motion_sequences" not in st.session_state:
+    st.session_state.motion_sequences = []
+if "record_start_time" not in st.session_state:
+    st.session_state.record_start_time = None
+
+# Save sequences next to app.py in a 'sequences' subfolder (works on Windows/Mac/Linux)
+import sys
+from pathlib import Path
+
+SEQUENCES_DIR = str(Path(__file__).parent.parent / "sequences")
+os.makedirs(SEQUENCES_DIR, exist_ok=True)
+
+
+# Load saved sequences from disk
+def load_sequences():
+    seqs = []
+    for f in os.listdir(SEQUENCES_DIR):
+        if f.endswith(".json"):
+            try:
+                with open(os.path.join(SEQUENCES_DIR, f)) as fp:
+                    seqs.append(json.load(fp))
+            except:
+                pass
+    return sorted(seqs, key=lambda x: x.get("created", ""), reverse=True)
+
+
+def save_sequence(name, frames):
+    seq = {
+        "name": name,
+        "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "frame_count": len(frames),
+        "duration_s": frames[-1]["t"] - frames[0]["t"] if len(frames) > 1 else 0,
+        "frames": frames
+    }
+    path = os.path.join(SEQUENCES_DIR, f"{name.replace(' ', '_')}_{int(time.time())}.json")
+    with open(path, "w") as f:
+        json.dump(seq, f, indent=2)
+    return seq
+
+
+# ─── Recording Controls ───────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Recording Controls</div>', unsafe_allow_html=True)
+
+col_r1, col_r2, col_r3, col_info = st.columns([1, 1, 1, 2])
+
+with col_r1:
+    if not st.session_state.recording:
+        if st.button("🔴 START RECORDING", use_container_width=True):
+            st.session_state.recording = True
+            st.session_state.recorded_frames = []
+            st.session_state.record_start_time = time.time()
+            st.success("Recording started!")
+            st.rerun()
+    else:
+        st.markdown("""
+        <div style="text-align:center; padding:8px; background:rgba(255,68,68,0.1); 
+                    border:1px solid #ff4444; border-radius:6px; 
+                    font-family:'Share Tech Mono',monospace; color:#ff4444;
+                    animation: pulse 1s infinite;">
+            🔴 RECORDING
+        </div>
+        """, unsafe_allow_html=True)
+
+with col_r2:
+    if st.session_state.recording:
+        if st.button("⏸ CAPTURE FRAME", use_container_width=True):
+            frame = dict(st.session_state.joints)
+            frame["t"] = time.time() - (st.session_state.record_start_time or time.time())
+            st.session_state.recorded_frames.append(frame)
+            st.success(f"Frame {len(st.session_state.recorded_frames)} captured")
+
+with col_r3:
+    if st.session_state.recording:
+        if st.button("⏹ STOP RECORDING", use_container_width=True):
+            st.session_state.recording = False
+            if st.session_state.recorded_frames:
+                st.success(f"Recording stopped. {len(st.session_state.recorded_frames)} frames captured.")
+            else:
+                st.warning("No frames recorded.")
+
+with col_info:
+    n = len(st.session_state.recorded_frames)
+    duration = 0
+    if n > 1:
+        duration = st.session_state.recorded_frames[-1]["t"] - st.session_state.recorded_frames[0]["t"]
+    st.markdown(f"""
+    <div class="info-box">
+        <span style="color:#4a6080;">FRAMES CAPTURED:</span> <span style="color:#00d4ff;">{n}</span>
+        &nbsp;&nbsp;&nbsp;
+        <span style="color:#4a6080;">DURATION:</span> <span style="color:#00d4ff;">{duration:.1f}s</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ─── Current Recording Preview ────────────────────────────────────────────────
+if st.session_state.recorded_frames:
+    st.markdown('<div class="section-header">◈ Captured Frames</div>', unsafe_allow_html=True)
+
+    frames = st.session_state.recorded_frames
+
+    # Save + Name
+    col_name, col_save = st.columns([3, 1])
+    with col_name:
+        seq_name = st.text_input("Sequence Name", f"sequence_{len(st.session_state.motion_sequences) + 1}",
+                                 label_visibility="collapsed", placeholder="Enter sequence name...")
+    with col_save:
+        if st.button("💾 SAVE SEQUENCE", use_container_width=True):
+            seq = save_sequence(seq_name, frames)
+            st.session_state.motion_sequences.append(seq)
+            st.session_state.recorded_frames = []
+            st.success(f"✓ Saved '{seq_name}' ({len(frames)} frames)")
+            st.rerun()
+
+    # Frame table
+    import pandas as pd
+
+    frame_df = pd.DataFrame([{
+        "Frame": i + 1,
+        "Time (s)": f"{f['t']:.2f}",
+        "Waist": f"{f['waist']}°",
+        "Shoulder": f"{f['shoulder']}°",
+        "Elbow": f"{f['elbow']}°",
+        "Wrist P.": f"{f['wrist_pitch']}°",
+        "Wrist R.": f"{f['wrist_roll']}°",
+        "Gripper": f"{f['gripper']}%",
+    } for i, f in enumerate(frames)])
+
+    st.dataframe(frame_df, use_container_width=True, hide_index=True,
+                 column_config={"Frame": st.column_config.NumberColumn(width="small")})
+
+# ─── Saved Sequences Library ──────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Saved Sequence Library</div>', unsafe_allow_html=True)
+
+disk_seqs = load_sequences()
+all_seqs = disk_seqs  # Could merge with session_state
+
+if not all_seqs:
+    st.markdown("""
+    <div class="info-box" style="text-align:center; padding:24px;">
+        No sequences saved yet. Record a motion above and save it.
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    for seq in all_seqs:
+        col_seq, col_play, col_dl, col_del = st.columns([4, 1, 1, 1])
+        with col_seq:
+            st.markdown(f"""
+            <div style="padding:10px 0;">
+                <span style="font-family:'Share Tech Mono',monospace; color:#00d4ff; font-size:14px;">
+                    ▶ {seq['name']}
+                </span>
+                <span style="font-family:'Share Tech Mono',monospace; color:#4a6080; font-size:11px; margin-left:12px;">
+                    {seq['frame_count']} frames · {seq.get('duration_s', 0):.1f}s · {seq.get('created', '')}
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+        with col_play:
+            if st.button("▶ Play", use_container_width=True, key=f"play_{seq['name']}"):
+                st.info(f"Replaying '{seq['name']}' — Connect hardware and use replay_sequence.py for live playback")
+        with col_dl:
+            seq_json = json.dumps(seq, indent=2)
+            st.download_button("⬇ Save", seq_json, file_name=f"{seq['name']}.json",
+                               mime="application/json", key=f"dl_{seq['name']}", use_container_width=True)
+        with col_del:
+            if st.button("🗑", use_container_width=True, key=f"del_{seq['name']}"):
+                # Remove file
+                for f in os.listdir(SEQUENCES_DIR):
+                    if seq['name'].replace(' ', '_') in f:
+                        os.remove(os.path.join(SEQUENCES_DIR, f))
+                st.rerun()
+
+# ─── Replay Script ────────────────────────────────────────────────────────────
+with st.expander("🐍 Sequence Replay Script (replay_sequence.py)"):
+    st.code("""
+# replay_sequence.py
+# Usage: python replay_sequence.py my_sequence.json COM3
+
+import json, serial, time, sys
+
+seq_file = sys.argv[1] if len(sys.argv)>1 else "sequence.json"
+port     = sys.argv[2] if len(sys.argv)>2 else "COM3"
+
+with open(seq_file) as f:
+    seq = json.load(f)
+
+print(f"Replaying '{seq['name']}' — {seq['frame_count']} frames")
+
+try:
+    ser = serial.Serial(port, 9600)
+except:
+    ser = None
+    print("No serial — simulation mode")
+
+frames = seq['frames']
+start = time.time()
+
+for i, frame in enumerate(frames):
+    # Timing
+    target_t = frame['t']
+    elapsed = time.time() - start
+    if target_t > elapsed:
+        time.sleep(target_t - elapsed)
+
+    cmd  = f"W{frame['waist']:03d}"
+    cmd += f"S{frame['shoulder']:03d}"
+    cmd += f"E{frame['elbow']:03d}"
+    cmd += f"P{frame['wrist_pitch']:03d}"
+    cmd += f"R{frame['wrist_roll']:03d}"
+    cmd += f"G{frame['gripper']:03d}\\n"
+
+    print(f"  Frame {i+1}/{len(frames)}: {cmd.strip()}")
+    if ser: ser.write(cmd.encode())
+
+print("✓ Sequence complete")
+if ser: ser.close()
+""", language="python")

@@ -1,0 +1,265 @@
+"""Voice ControlV Page - Web Speech API"""
+
+st.markdown("""
+<div style="font-family:'Share Tech Mono',monospace; font-size:24px; color:#00d4ff; letter-spacing:4px; margin-bottom:4px;">
+    🗣️ VOICE CONTROL
+</div>
+<div style="color:#4a6080; font-size:13px; letter-spacing:2px; margin-bottom:24px;">
+    SPEECH RECOGNITION — WEB SPEECH API
+</div>
+""", unsafe_allow_html=True)
+
+# ─── Voice Commands Reference ─────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Voice Command Reference</div>', unsafe_allow_html=True)
+
+commands = [
+    ("🏠", "go home", "All joints → home position"),
+    ("🔒", "close gripper", "Gripper → closed"),
+    ("🔓", "open gripper", "Gripper → open"),
+    ("⬆️", "shoulder up", "Shoulder +15°"),
+    ("⬇️", "shoulder down", "Shoulder -15°"),
+    ("⬆️", "elbow up", "Elbow +15°"),
+    ("⬇️", "elbow down", "Elbow -15°"),
+    ("↩️", "rotate left", "Waist -15°"),
+    ("↪️", "rotate right", "Waist +15°"),
+    ("🔴", "stop", "Emergency stop"),
+    ("📼", "start recording", "Begin motion recording"),
+    ("⏹️", "stop recording", "End motion recording"),
+    ("▶️", "play sequence", "Replay last sequence"),
+]
+
+cols = st.columns(3)
+for i, (icon, cmd, desc) in enumerate(commands):
+    with cols[i % 3]:
+        st.markdown(f"""
+        <div class="metric-card" style="padding:12px 16px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <div style="font-size:20px;">{icon}</div>
+                <div>
+                    <div style="font-family:'Share Tech Mono',monospace; font-size:12px; color:#ffcc00;">"{cmd}"</div>
+                    <div style="font-size:11px; color:#c9d8f0; margin-top:2px;">{desc}</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# ─── Web Speech API Interface ─────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Voice Recognition Interface</div>', unsafe_allow_html=True)
+st.markdown("""
+<div class="info-box">
+    ℹ️ Voice recognition runs in your browser using the Web Speech API.
+    Click the microphone button and speak a command clearly.
+</div>
+""", unsafe_allow_html=True)
+
+# Voice UI using HTML/JS
+voice_html = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+#voice-container {
+    background: #111827;
+    border: 1px solid #1e3a5f;
+    border-radius: 12px;
+    padding: 32px;
+    text-align: center;
+    font-family: 'Share Tech Mono', monospace;
+    color: #c9d8f0;
+    margin: 16px 0;
+}
+
+#mic-btn {
+    width: 90px; height: 90px;
+    border-radius: 50%;
+    background: transparent;
+    border: 2px solid #00d4ff;
+    color: #00d4ff;
+    font-size: 36px;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+}
+#mic-btn:hover { background: rgba(0,212,255,0.1); }
+#mic-btn.listening {
+    background: rgba(255,0,0,0.1);
+    border-color: #ff4444;
+    color: #ff4444;
+    animation: ripple 1.5s infinite;
+}
+
+@keyframes ripple {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255,68,68,0.4); }
+    50% { box-shadow: 0 0 0 20px rgba(255,68,68,0); }
+}
+
+#status-line { font-size: 13px; color: #4a6080; letter-spacing: 2px; margin: 8px 0; }
+#heard-text  { font-size: 18px; color: #00d4ff; margin: 12px 0; min-height: 28px; }
+#cmd-result  { font-size: 14px; color: #00ff88; min-height: 22px; }
+#history     { text-align: left; margin-top: 20px; max-height: 180px; overflow-y: auto;
+               border-top: 1px solid #1e3a5f; padding-top: 12px; }
+.hist-item   { font-size: 11px; color: #4a6080; padding: 3px 0; border-bottom: 1px solid #0a0e1a; }
+.hist-item .ht { color: #ffcc00; }
+.hist-item .hc { color: #00ff88; }
+</style>
+
+<div id="voice-container">
+    <button id="mic-btn" onclick="toggleListening()">🎤</button>
+    <div id="status-line">CLICK MICROPHONE TO START</div>
+    <div id="heard-text">—</div>
+    <div id="cmd-result"></div>
+    <div id="history"></div>
+</div>
+
+<script>
+const COMMANDS = {
+    "go home":        "HOME",
+    "close gripper":  "G100",
+    "open gripper":   "G000",
+    "shoulder up":    "S+15",
+    "shoulder down":  "S-15",
+    "elbow up":       "E+15",
+    "elbow down":     "E-15",
+    "rotate left":    "W-15",
+    "rotate right":   "W+15",
+    "stop":           "STOP",
+    "wrist up":       "P+15",
+    "wrist down":     "P-15",
+    "start recording":"REC_START",
+    "stop recording": "REC_STOP",
+    "play sequence":  "PLAY",
+};
+
+let recognition, isListening = false;
+const history = [];
+
+function initSpeech() {
+    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRec) {
+        document.getElementById('status-line').textContent = "❌ Browser doesn't support Speech API (use Chrome)";
+        return null;
+    }
+    const r = new SpeechRec();
+    r.continuous = true;
+    r.interimResults = true;
+    r.lang = 'en-US';
+
+    r.onstart = () => {
+        document.getElementById('status-line').textContent = "🔴 LISTENING...";
+        document.getElementById('mic-btn').classList.add('listening');
+    };
+
+    r.onresult = (e) => {
+        let interim = '', final = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+            const t = e.results[i][0].transcript.toLowerCase().trim();
+            if (e.results[i].isFinal) final = t;
+            else interim = t;
+        }
+        document.getElementById('heard-text').textContent = final || interim || '—';
+        if (final) processCommand(final);
+    };
+
+    r.onerror = (e) => {
+        document.getElementById('status-line').textContent = "⚠ Error: " + e.error;
+    };
+
+    r.onend = () => {
+        if (isListening) r.start(); // Keep going
+    };
+    return r;
+}
+
+function processCommand(text) {
+    let matched = null;
+    for (const [phrase, cmd] of Object.entries(COMMANDS)) {
+        if (text.includes(phrase)) { matched = {phrase, cmd}; break; }
+    }
+    const resultEl = document.getElementById('cmd-result');
+    if (matched) {
+        resultEl.textContent = `✓ "${matched.phrase}" → ${matched.cmd}`;
+        resultEl.style.color = '#00ff88';
+        addHistory(text, matched.phrase, matched.cmd);
+        // Post to Streamlit via URL params (for server-side action)
+        const url = new URL(window.location);
+        url.searchParams.set('voice_cmd', matched.cmd);
+        window.history.replaceState({}, '', url);
+    } else {
+        resultEl.textContent = `⚠ Unknown: "${text}"`;
+        resultEl.style.color = '#ffcc00';
+    }
+}
+
+function addHistory(heard, phrase, cmd) {
+    history.unshift({heard, phrase, cmd, time: new Date().toLocaleTimeString()});
+    const el = document.getElementById('history');
+    el.innerHTML = history.slice(0,10).map(h => 
+        `<div class="hist-item"><span style="color:#4a6080;">[${h.time}]</span> 
+         Heard: <span class="ht">"${h.heard}"</span> → 
+         <span class="hc">${h.cmd}</span></div>`
+    ).join('');
+}
+
+function toggleListening() {
+    if (!recognition) recognition = initSpeech();
+    if (!recognition) return;
+
+    if (isListening) {
+        recognition.stop();
+        isListening = false;
+        document.getElementById('status-line').textContent = "CLICK MICROPHONE TO START";
+        document.getElementById('mic-btn').classList.remove('listening');
+        document.getElementById('mic-btn').textContent = '🎤';
+    } else {
+        recognition.start();
+        isListening = true;
+        document.getElementById('mic-btn').textContent = '🔴';
+    }
+}
+</script>
+"""
+st.components.v1.html(voice_html, height=460)
+
+st.markdown("---")
+
+# ─── Manual Command Test ──────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Test Commands Manually</div>', unsafe_allow_html=True)
+col_t1, col_t2, col_t3 = st.columns(3)
+
+quick_cmds = {
+    "col1": [("🏠 Home", {"waist": 90, "shoulder": 90, "elbow": 90, "wrist_pitch": 90, "wrist_roll": 90, "gripper": 0}),
+             ("🔒 Close Gripper", None),
+             ("🔓 Open Gripper", None)],
+    "col2": [("⬆ Shoulder Up", None), ("⬇ Shoulder Down", None), ("⬆ Elbow Up", None)],
+    "col3": [("↩ Rotate Left", None), ("↪ Rotate Right", None), ("🔴 STOP", None)],
+}
+
+for col_el, col_key in zip([col_t1, col_t2, col_t3], ["col1", "col2", "col3"]):
+    with col_el:
+        for label, preset in quick_cmds[col_key]:
+            if st.button(label, use_container_width=True, key=f"vc_{label}"):
+                if preset:
+                    st.session_state.joints.update(preset)
+                else:
+                    j = st.session_state.joints
+                    if "Shoulder Up" in label:
+                        j["shoulder"] = min(180, j["shoulder"] + 15)
+                    elif "Shoulder Down" in label:
+                        j["shoulder"] = max(0, j["shoulder"] - 15)
+                    elif "Elbow Up" in label:
+                        j["elbow"] = min(180, j["elbow"] + 15)
+                    elif "Rotate Left" in label:
+                        j["waist"] = max(0, j["waist"] - 15)
+                    elif "Rotate Right" in label:
+                        j["waist"] = min(180, j["waist"] + 15)
+                    elif "Close" in label:
+                        j["gripper"] = 100
+                    elif "Open" in label:
+                        j["gripper"] = 0
+                    elif "STOP" in label:
+                        j.update({k: 90 for k in j}); j["gripper"] = 0
+                st.rerun()

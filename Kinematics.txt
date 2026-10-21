@@ -1,0 +1,282 @@
+"""Kinematics Page - Forward Kinematics, ICR, Linear Velocity"""
+import numpy as np
+import math
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+st.markdown("""
+<div style="font-family:'Share Tech Mono',monospace; font-size:24px; color:#00d4ff; letter-spacing:4px; margin-bottom:4px;">
+    📐 KINEMATICS ANALYSIS
+</div>
+<div style="color:#4a6080; font-size:13px; letter-spacing:2px; margin-bottom:24px;">
+    FORWARD KINEMATICS · ICR · LINEAR VELOCITY · DH PARAMETERS
+</div>
+""", unsafe_allow_html=True)
+
+# ─── Link Lengths Configuration ───────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Robot Configuration (DH Parameters)</div>', unsafe_allow_html=True)
+
+col_dh1, col_dh2, col_dh3, col_dh4 = st.columns(4)
+with col_dh1:
+    L1 = st.number_input("Link 1 — Shoulder (mm)", 10, 500, 120, step=5)
+with col_dh2:
+    L2 = st.number_input("Link 2 — Elbow (mm)", 10, 500, 110, step=5)
+with col_dh3:
+    L3 = st.number_input("Link 3 — Wrist (mm)", 10, 300, 90, step=5)
+with col_dh4:
+    L4 = st.number_input("Link 4 — EE (mm)", 10, 200, 60, step=5)
+
+# DH Parameters Table
+st.markdown("""
+<div style="overflow-x:auto; margin:12px 0;">
+<table style="width:100%; border-collapse:collapse; font-family:'Share Tech Mono',monospace; font-size:12px; color:#c9d8f0;">
+<thead>
+<tr style="background:#1e3a5f; color:#00d4ff;">
+    <th style="padding:8px 12px; text-align:left;">Joint i</th>
+    <th style="padding:8px 12px;">a (mm)</th>
+    <th style="padding:8px 12px;">α (rad)</th>
+    <th style="padding:8px 12px;">d (mm)</th>
+    <th style="padding:8px 12px;">θ (variable)</th>
+    <th style="padding:8px 12px; text-align:left;">Description</th>
+</tr>
+</thead>
+<tbody>
+""" + "".join([
+    f"""<tr style="border-bottom:1px solid #1e3a5f; background:{'rgba(0,212,255,0.02)' if i % 2 == 0 else 'transparent'};">
+    <td style="padding:6px 12px; color:#ff6b35;">J{i + 1}</td>
+    <td style="padding:6px 12px; text-align:center;">{a}</td>
+    <td style="padding:6px 12px; text-align:center;">{alpha}</td>
+    <td style="padding:6px 12px; text-align:center;">{d}</td>
+    <td style="padding:6px 12px; text-align:center; color:#ffcc00;">{theta}</td>
+    <td style="padding:6px 12px; color:#4a6080;">{desc}</td>
+    </tr>"""
+    for i, (a, alpha, d, theta, desc) in enumerate([
+        (0, "π/2", 60, "θ₁", "Waist rotation"),
+        ("L1", 0, 0, "θ₂", "Shoulder pitch"),
+        ("L2", 0, 0, "θ₃", "Elbow pitch"),
+        ("L3", "π/2", 0, "θ₄", "Wrist pitch"),
+        (0, "-π/2", "L4", "θ₅", "Wrist roll"),
+    ])
+]) + """
+</tbody>
+</table>
+</div>
+""", unsafe_allow_html=True)
+
+# ─── FK Calculation ───────────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Forward Kinematics — Joint Positions</div>', unsafe_allow_html=True)
+
+joints = st.session_state.joints
+w = math.radians(joints["waist"])
+s = math.radians(joints["shoulder"] - 90)
+e = math.radians(joints["elbow"] - 90)
+wp = math.radians(joints["wrist_pitch"] - 90)
+wr = math.radians(joints["wrist_roll"])
+
+
+# Compute transformation matrices (simplified)
+def dh_matrix(theta, alpha, a, d):
+    """Denavit-Hartenberg transformation matrix"""
+    ct, st_ = math.cos(theta), math.sin(theta)
+    ca, sa = math.cos(alpha), math.sin(alpha)
+    return np.array([
+        [ct, -st_ * ca, st_ * sa, a * ct],
+        [st_, ct * ca, -ct * sa, a * st_],
+        [0, sa, ca, d],
+        [0, 0, 0, 1]
+    ])
+
+
+T01 = dh_matrix(w, math.pi / 2, 0, 60)
+T12 = dh_matrix(s, 0, L1, 0)
+T23 = dh_matrix(e, 0, L2, 0)
+T34 = dh_matrix(wp, math.pi / 2, L3, 0)
+T45 = dh_matrix(wr, -math.pi / 2, 0, L4)
+
+T02 = T01 @ T12
+T03 = T02 @ T23
+T04 = T03 @ T34
+T05 = T04 @ T45
+
+# Extract joint positions
+p0 = np.array([0, 0, 0, 1])
+p1 = T01 @ p0
+p2 = T02 @ p0
+p3 = T03 @ p0
+p4 = T04 @ p0
+p5 = T05 @ p0
+
+positions = [np.array([0, 0, 0]), p1[:3], p2[:3], p3[:3], p4[:3], p5[:3]]
+joint_names_fk = ["Base", "Waist", "Shoulder", "Elbow", "Wrist", "EE"]
+
+# Display positions table
+import pandas as pd
+
+fk_data = [{
+    "Joint": name,
+    "X (mm)": f"{pos[0]:.2f}",
+    "Y (mm)": f"{pos[1]:.2f}",
+    "Z (mm)": f"{pos[2]:.2f}",
+    "Distance (mm)": f"{np.linalg.norm(pos):.2f}"
+} for name, pos in zip(joint_names_fk, positions)]
+
+st.dataframe(pd.DataFrame(fk_data), use_container_width=True, hide_index=True)
+
+# ─── ICR and Velocity ─────────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ ICR & Linear Velocity Analysis</div>', unsafe_allow_html=True)
+
+col_icr1, col_icr2 = st.columns(2)
+
+with col_icr1:
+    st.markdown("""
+    <div class="section-header" style="font-size:11px;">JOINT ANGULAR VELOCITIES</div>
+    """, unsafe_allow_html=True)
+
+    omega_waist = st.slider("ω₁ Waist (°/s)", -90, 90, 0, key="om1")
+    omega_shoulder = st.slider("ω₂ Shoulder (°/s)", -90, 90, 0, key="om2")
+    omega_elbow = st.slider("ω₃ Elbow (°/s)", -90, 90, 0, key="om3")
+    omega_wp = st.slider("ω₄ Wrist Pitch (°/s)", -90, 90, 0, key="om4")
+    omega_wr = st.slider("ω₅ Wrist Roll (°/s)", -90, 90, 0, key="om5")
+
+    # Convert to rad/s
+    omegas = np.array([math.radians(x) for x in [omega_waist, omega_shoulder, omega_elbow, omega_wp, omega_wr]])
+
+with col_icr2:
+    # Jacobian (simplified linear Jacobian for end effector velocity)
+    # v_ee = J * omega
+    # Using geometric approach
+
+    ee = p5[:3]
+
+    # For each joint, compute z-axis and position contribution
+    z_axes = [
+        np.array([0, 0, 1]),  # J1 waist: z-axis of frame 0
+        T01[:3, :3] @ np.array([0, 0, 1]),  # J2
+        T02[:3, :3] @ np.array([0, 0, 1]),  # J3
+        T03[:3, :3] @ np.array([0, 0, 1]),  # J4
+        T04[:3, :3] @ np.array([0, 0, 1]),  # J5
+    ]
+    origins = [np.array([0, 0, 0]), p1[:3], p2[:3], p3[:3], p4[:3]]
+
+    # Linear velocity columns of Jacobian: z_i × (p_ee - p_i)
+    J_linear = np.zeros((3, 5))
+    for i in range(5):
+        r = ee - origins[i]
+        J_linear[:, i] = np.cross(z_axes[i], r)
+
+    v_ee = J_linear @ omegas
+    v_magnitude = np.linalg.norm(v_ee)
+
+    # ICR for waist rotation (horizontal plane)
+    if abs(omega_waist) > 0.01:
+        icr_radius = v_magnitude / abs(math.radians(omega_waist)) if abs(omega_waist) > 0 else float('inf')
+    else:
+        icr_radius = float('inf')
+
+    st.markdown(f"""
+    <div class="conn-panel">
+        <div class="label">END EFFECTOR LINEAR VELOCITY</div>
+        <div style="margin:12px 0;">
+            <div style="display:flex; justify-content:space-between; margin:6px 0;">
+                <span style="color:#4a6080;font-size:12px;">Vx:</span>
+                <span style="font-family:'Share Tech Mono',monospace;color:#00d4ff;">{v_ee[0]:.2f} mm/s</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin:6px 0;">
+                <span style="color:#4a6080;font-size:12px;">Vy:</span>
+                <span style="font-family:'Share Tech Mono',monospace;color:#00d4ff;">{v_ee[1]:.2f} mm/s</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin:6px 0;">
+                <span style="color:#4a6080;font-size:12px;">Vz:</span>
+                <span style="font-family:'Share Tech Mono',monospace;color:#00d4ff;">{v_ee[2]:.2f} mm/s</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; margin:10px 0 4px; border-top:1px solid #1e3a5f; padding-top:8px;">
+                <span style="color:#c9d8f0;font-size:12px;">|V| Speed:</span>
+                <span style="font-family:'Share Tech Mono',monospace;color:#00ff88;font-size:18px;">{v_magnitude:.2f} mm/s</span>
+            </div>
+        </div>
+        <div class="label" style="margin-top:12px;">ICR ANALYSIS (WAIST PLANE)</div>
+        <div style="display:flex; justify-content:space-between; margin-top:8px;">
+            <span style="color:#4a6080;font-size:12px;">ICR Radius:</span>
+            <span style="font-family:'Share Tech Mono',monospace;color:#ff6b35;">
+                {'∞' if icr_radius == float('inf') else f'{icr_radius:.1f} mm'}
+            </span>
+        </div>
+        <div style="display:flex; justify-content:space-between; margin-top:4px;">
+            <span style="color:#4a6080;font-size:12px;">EE Position:</span>
+            <span style="font-family:'Share Tech Mono',monospace;color:#ff6b35;font-size:11px;">
+                ({ee[0]:.1f}, {ee[1]:.1f}, {ee[2]:.1f})
+            </span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ─── Jacobian Matrix Display ──────────────────────────────────────────────────
+with st.expander("◈ Full Jacobian Matrix (3×5 Linear)"):
+    st.markdown("""
+    <div style="font-family:'Share Tech Mono',monospace; font-size:12px; color:#4a6080; margin-bottom:8px;">
+    J × ω = v_ee &nbsp;&nbsp; (v is 3×1 linear velocity of end effector)
+    </div>
+    """, unsafe_allow_html=True)
+
+    j_df = pd.DataFrame(
+        np.round(J_linear, 3),
+        index=["Vx", "Vy", "Vz"],
+        columns=["J1-Waist", "J2-Shoulder", "J3-Elbow", "J4-WristP", "J5-WristR"]
+    )
+    st.dataframe(j_df, use_container_width=True)
+
+    # Jacobian determinant / manipulability
+    manip = math.sqrt(max(0, np.linalg.det(J_linear @ J_linear.T)))
+    st.markdown(f"""
+    <div class="info-box">
+        <span style="color:#4a6080;">MANIPULABILITY INDEX (√det(J·Jᵀ)):</span> 
+        <span style="color:#{'00ff88' if manip > 1000 else 'ffcc00' if manip > 100 else 'ff4444'}">{manip:.2f}</span>
+        &nbsp;&nbsp;
+        <span style="color:#4a6080; font-size:11px;">
+            {'● High dexterity' if manip > 1000 else '● Moderate dexterity' if manip > 100 else '● Near singularity!'}
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ─── Workspace Plot ───────────────────────────────────────────────────────────
+st.markdown('<div class="section-header">◈ Reachable Workspace (Side View)</div>', unsafe_allow_html=True)
+
+# Sample workspace points
+ws_r, ws_z = [], []
+for s_ang in np.linspace(-90, 90, 20):
+    for e_ang in np.linspace(-90, 90, 20):
+        s_r = math.radians(s_ang)
+        e_r = math.radians(e_ang)
+        x = L1 * math.cos(s_r) + L2 * math.cos(s_r + e_r) + (L3 + L4) * math.cos(s_r + e_r)
+        z = 60 + L1 * math.sin(s_r) + L2 * math.sin(s_r + e_r) + (L3 + L4) * math.sin(s_r + e_r)
+        ws_r.append(abs(x))
+        ws_z.append(z)
+
+current_r = math.sqrt(ee[0] ** 2 + ee[1] ** 2)
+current_z = ee[2]
+
+fig_ws = go.Figure()
+fig_ws.add_trace(go.Scatter(
+    x=ws_r, y=ws_z,
+    mode='markers',
+    marker=dict(size=4, color='rgba(0,212,255,0.15)', line=dict(color='rgba(0,212,255,0.3)', width=0.5)),
+    name='Workspace'
+))
+fig_ws.add_trace(go.Scatter(
+    x=[current_r], y=[current_z],
+    mode='markers',
+    marker=dict(size=14, color='#00ff88', symbol='diamond',
+                line=dict(color='white', width=2)),
+    name='Current EE Position'
+))
+fig_ws.update_layout(
+    xaxis=dict(title='Radial Distance (mm)', gridcolor='#1e3a5f', color='#4a6080', zerolinecolor='#1e3a5f'),
+    yaxis=dict(title='Height Z (mm)', gridcolor='#1e3a5f', color='#4a6080', zerolinecolor='#1e3a5f'),
+    paper_bgcolor='rgba(17,24,39,0)',
+    plot_bgcolor='rgba(17,24,39,0.5)',
+    height=300,
+    margin=dict(l=40, r=20, t=20, b=40),
+    legend=dict(font=dict(color='#c9d8f0', family='Share Tech Mono'), bgcolor='rgba(0,0,0,0)'),
+    font=dict(family='Share Tech Mono', color='#4a6080')
+)
+st.plotly_chart(fig_ws, use_container_width=True, config={'displayModeBar': False})
